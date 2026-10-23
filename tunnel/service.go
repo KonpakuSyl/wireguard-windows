@@ -13,25 +13,20 @@ import (
 	"runtime"
 	"time"
 
-	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/svc"
-	"golang.org/x/sys/windows/svc/mgr"
 	"golang.zx2c4.com/wireguard/windows/conf"
 	"golang.zx2c4.com/wireguard/windows/driver"
 	"golang.zx2c4.com/wireguard/windows/elevate"
-	"golang.zx2c4.com/wireguard/windows/ringlogger"
 	"golang.zx2c4.com/wireguard/windows/services"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
-type tunnelService struct {
-	Path string
-}
-
-func (service *tunnelService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (svcSpecificEC bool, exitCode uint32) {
-	serviceState := svc.StartPending
-	changes <- svc.Status{State: serviceState}
-
+// RunForeground brings the tunnel in confPath up and blocks until stop is
+// closed, then tears the adapter, routes, DNS and firewall back down.
+// stop is typically closed by Ctrl+C or by another process signaling the
+// tunnel's named stop event. This replaces the Windows service control loop:
+// StartServiceCtrlDispatcher only succeeds when the process was started by
+// the Service Control Manager.
+func RunForeground(confPath string, stop <-chan struct{}) error {
 	var watcher *interfaceWatcher
 	var adapter *driver.Adapter
 	var luid winipcfg.LUID
@@ -40,48 +35,38 @@ func (service *tunnelService) Execute(args []string, r <-chan svc.ChangeRequest,
 	serviceError := services.ErrorSuccess
 
 	defer func() {
-		svcSpecificEC, exitCode = services.DetermineErrorCode(err, serviceError)
-		logErr := services.CombineErrors(err, serviceError)
-		if logErr != nil {
-			log.Println(logErr)
-		}
-		serviceState = svc.StopPending
-		changes <- svc.Status{State: serviceState}
-
 		stopIt := make(chan bool, 1)
 		go func() {
 			t := time.NewTicker(time.Second * 30)
-			for {
-				select {
-				case <-t.C:
-					t.Stop()
-					buf := make([]byte, 1024)
-					for {
-						n := runtime.Stack(buf, true)
-						if n < len(buf) {
-							buf = buf[:n]
-							break
-						}
-						buf = make([]byte, 2*len(buf))
+			defer t.Stop()
+			select {
+			case <-t.C:
+				buf := make([]byte, 1024)
+				for {
+					n := runtime.Stack(buf, true)
+					if n < len(buf) {
+						buf = buf[:n]
+						break
 					}
-					lines := bytes.Split(buf, []byte{'\n'})
-					log.Println("Failed to shutdown after 30 seconds. Probably dead locked. Printing stack and killing.")
-					for _, line := range lines {
-						if len(bytes.TrimSpace(line)) > 0 {
-							log.Println(string(line))
-						}
-					}
-					os.Exit(777)
-					return
-				case <-stopIt:
-					t.Stop()
-					return
+					buf = make([]byte, 2*len(buf))
 				}
+				lines := bytes.Split(buf, []byte{'\n'})
+				log.Println("Failed to shutdown after 30 seconds. Probably dead locked. Printing stack and killing.")
+				for _, line := range lines {
+					if len(bytes.TrimSpace(line)) > 0 {
+						log.Println(string(line))
+					}
+				}
+				os.Exit(777)
+			case <-stopIt:
+				return
 			}
 		}()
 
-		if logErr == nil && adapter != nil && config != nil {
-			logErr = runScriptCommand(config.Interface.PreDown, config.Name)
+		if err == nil && serviceError == services.ErrorSuccess && adapter != nil && config != nil {
+			if scriptErr := runScriptCommand(config.Interface.PreDown, config.Name); scriptErr != nil {
+				log.Printf("PreDown: %v", scriptErr)
+			}
 		}
 		if watcher != nil {
 			watcher.Destroy()
@@ -89,51 +74,24 @@ func (service *tunnelService) Execute(args []string, r <-chan svc.ChangeRequest,
 		if adapter != nil {
 			adapter.Close()
 		}
-		if logErr == nil && adapter != nil && config != nil {
-			_ = runScriptCommand(config.Interface.PostDown, config.Name)
+		if err == nil && serviceError == services.ErrorSuccess && adapter != nil && config != nil {
+			if scriptErr := runScriptCommand(config.Interface.PostDown, config.Name); scriptErr != nil {
+				log.Printf("PostDown: %v", scriptErr)
+			}
 		}
 		stopIt <- true
 		log.Println("Shutting down")
 	}()
 
-	var logFile string
-	logFile, err = conf.LogFile(true)
-	if err != nil {
-		serviceError = services.ErrorRingloggerOpen
-		return
-	}
-	err = ringlogger.InitGlobalLogger(logFile, "TUN")
-	if err != nil {
-		serviceError = services.ErrorRingloggerOpen
-		return
-	}
-
-	config, err = conf.LoadFromPath(service.Path)
+	config, err = conf.LoadFromPath(confPath)
 	if err != nil {
 		serviceError = services.ErrorLoadConfiguration
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 	config.DeduplicateNetworkEntries()
 
 	log.SetPrefix(fmt.Sprintf("[%s] ", config.Name))
-
-	services.PrintStarting()
-
-	if services.StartedAtBoot() {
-		if m, err := mgr.Connect(); err == nil {
-			if lockStatus, err := m.LockStatus(); err == nil && lockStatus.IsLocked {
-				/* If we don't do this, then the driver installation will block forever, because
-				 * installing a network adapter starts the driver service too. Apparently at boot time,
-				 * Windows 8.1 locks the SCM for each service start, creating a deadlock if we don't
-				 * announce that we're running before starting additional services.
-				 */
-				log.Printf("SCM locked for %v by %s, marking service as started", lockStatus.Age, lockStatus.Owner)
-				serviceState = svc.Running
-				changes <- svc.Status{State: serviceState}
-			}
-			m.Disconnect()
-		}
-	}
+	log.Printf("Starting %s", "WireGuard tunnel")
 
 	evaluateStaticPitfalls()
 
@@ -141,36 +99,27 @@ func (service *tunnelService) Execute(args []string, r <-chan svc.ChangeRequest,
 	watcher, err = watchInterface()
 	if err != nil {
 		serviceError = services.ErrorSetNetConfig
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 
 	log.Println("Resolving DNS names")
 	err = config.ResolveEndpoints()
 	if err != nil {
 		serviceError = services.ErrorDNSLookup
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 
 	log.Println("Creating network adapter")
-	for i := range 15 {
-		if i > 0 {
-			time.Sleep(time.Second)
-			log.Printf("Retrying adapter creation after failure because system just booted (T+%v): %v", windows.DurationSinceBoot(), err)
-		}
-		adapter, err = driver.CreateAdapter(config.Name, "WireGuard", deterministicGUID(config))
-		if err == nil || !services.StartedAtBoot() {
-			break
-		}
-	}
+	adapter, err = driver.CreateAdapter(config.Name, "WireGuard", deterministicGUID(config))
 	if err != nil {
 		err = fmt.Errorf("Error creating adapter: %w", err)
 		serviceError = services.ErrorCreateNetworkAdapter
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 	luid = adapter.LUID()
-	driverVersion, err := driver.RunningVersion()
-	if err != nil {
-		log.Printf("Warning: unable to determine driver version: %v", err)
+	driverVersion, derr := driver.RunningVersion()
+	if derr != nil {
+		log.Printf("Warning: unable to determine driver version: %v", derr)
 	} else {
 		log.Printf("Using WireGuardNT/%d.%d", (driverVersion>>16)&0xffff, driverVersion&0xffff)
 	}
@@ -178,83 +127,61 @@ func (service *tunnelService) Execute(args []string, r <-chan svc.ChangeRequest,
 	if err != nil {
 		err = fmt.Errorf("Error enabling adapter logging: %w", err)
 		serviceError = services.ErrorCreateNetworkAdapter
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 
 	err = runScriptCommand(config.Interface.PreUp, config.Name)
 	if err != nil {
 		serviceError = services.ErrorRunScript
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 
 	err = enableFirewall(config, luid)
 	if err != nil {
 		serviceError = services.ErrorFirewall
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 
 	log.Println("Dropping privileges")
 	err = elevate.DropAllPrivileges(true)
 	if err != nil {
 		serviceError = services.ErrorDropPrivileges
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 
 	log.Println("Setting interface configuration")
-	err = adapter.SetConfiguration(config.ToDriverConfiguration())
+	driverConfig, driverConfigSize := config.ToDriverConfiguration()
+	err = adapter.SetConfiguration(driverConfig, driverConfigSize)
 	if err != nil {
 		serviceError = services.ErrorDeviceSetConfig
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 	err = adapter.SetAdapterState(driver.AdapterStateUp)
 	if err != nil {
 		serviceError = services.ErrorDeviceBringUp
-		return
+		return services.CombineErrors(err, serviceError)
 	}
 	watcher.Configure(adapter, config, luid)
 
 	err = runScriptCommand(config.Interface.PostUp, config.Name)
 	if err != nil {
 		serviceError = services.ErrorRunScript
-		return
+		return services.CombineErrors(err, serviceError)
 	}
-
-	changes <- svc.Status{State: serviceState, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 
 	var started bool
 	for {
 		select {
-		case c := <-r:
-			switch c.Cmd {
-			case svc.Stop, svc.Shutdown:
-				return
-			case svc.Interrogate:
-				changes <- c.CurrentStatus
-			default:
-				log.Printf("Unexpected service control request #%d\n", c)
-			}
-		case <-watcher.started:
+		case <-stop:
+			return nil
+		case family := <-watcher.started:
 			if !started {
-				serviceState = svc.Running
-				changes <- svc.Status{State: serviceState, Accepts: svc.AcceptStop | svc.AcceptShutdown}
-				log.Println("Startup complete")
+				log.Printf("Startup complete (%v)", family)
 				started = true
 			}
 		case e := <-watcher.errors:
 			serviceError, err = e.serviceError, e.err
-			return
+			return services.CombineErrors(err, serviceError)
 		}
 	}
-}
-
-func Run(confPath string) error {
-	name, err := conf.NameFromPath(confPath)
-	if err != nil {
-		return err
-	}
-	serviceName, err := conf.ServiceNameOfTunnel(name)
-	if err != nil {
-		return err
-	}
-	return svc.Run(serviceName, &tunnelService{confPath})
 }

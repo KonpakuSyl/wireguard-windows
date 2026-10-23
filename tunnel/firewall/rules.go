@@ -125,11 +125,11 @@ func permitTunInterface(session uintptr, baseObjects *baseObjects, weight uint8,
 }
 
 func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight uint8) error {
-	var conditions [2]wtFwpmFilterCondition0
+	// Match the executable path only. The original second condition required the
+	// Windows service SID (S-1-5-80-...), which a portable foreground process does
+	// not have. Anything running as this exact wgctl.exe is permitted.
+	var conditions [1]wtFwpmFilterCondition0
 
-	//
-	// First condition is the exe path of the current process.
-	//
 	appID, err := getCurrentProcessAppID()
 	if err != nil {
 		return wrapErr(err)
@@ -142,25 +142,6 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 		conditionValue: wtFwpConditionValue0{
 			_type: cFWP_BYTE_BLOB_TYPE,
 			value: uintptr(unsafe.Pointer(appID)),
-		},
-	}
-
-	//
-	// Second condition is the SECURITY_DESCRIPTOR of the current process.
-	// This prevents other processes hosted in the same exe from matching this filter.
-	//
-	sd, err := getCurrentProcessSecurityDescriptor()
-	if err != nil {
-		return wrapErr(err)
-	}
-
-	sdBlob := wtFwpByteBlob{sd.Length(), (*byte)(unsafe.Pointer(sd))}
-	conditions[1] = wtFwpmFilterCondition0{
-		fieldKey:  cFWPM_CONDITION_ALE_USER_ID,
-		matchType: cFWP_MATCH_EQUAL,
-		conditionValue: wtFwpConditionValue0{
-			_type: cFWP_SECURITY_DESCRIPTOR_TYPE,
-			value: uintptr(unsafe.Pointer(&sdBlob)),
 		},
 	}
 
@@ -185,7 +166,7 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	// #1 Permit outbound IPv4 traffic.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("Permit unrestricted outbound traffic for WireGuard service (IPv4)", "")
+		displayData, err := createWtFwpmDisplayData0("Permit unrestricted outbound traffic for wgctl.exe (IPv4)", "")
 		if err != nil {
 			return wrapErr(err)
 		}
@@ -203,7 +184,7 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	// #2 Permit inbound IPv4 traffic.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("Permit unrestricted inbound traffic for WireGuard service (IPv4)", "")
+		displayData, err := createWtFwpmDisplayData0("Permit unrestricted inbound traffic for wgctl.exe (IPv4)", "")
 		if err != nil {
 			return wrapErr(err)
 		}
@@ -221,7 +202,7 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	// #3 Permit outbound IPv6 traffic.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("Permit unrestricted outbound traffic for WireGuard service (IPv6)", "")
+		displayData, err := createWtFwpmDisplayData0("Permit unrestricted outbound traffic for wgctl.exe (IPv6)", "")
 		if err != nil {
 			return wrapErr(err)
 		}
@@ -239,7 +220,7 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	// #4 Permit inbound IPv6 traffic.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("Permit unrestricted inbound traffic for WireGuard service (IPv6)", "")
+		displayData, err := createWtFwpmDisplayData0("Permit unrestricted inbound traffic for wgctl.exe (IPv6)", "")
 		if err != nil {
 			return wrapErr(err)
 		}
@@ -253,8 +234,6 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 		}
 	}
 
-	runtime.KeepAlive(sdBlob)
-	runtime.KeepAlive(sd)
 	return nil
 }
 

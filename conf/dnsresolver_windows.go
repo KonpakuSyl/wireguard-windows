@@ -14,14 +14,10 @@ import (
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 
 	"golang.org/x/sys/windows"
-	"golang.zx2c4.com/wireguard/windows/services"
 )
 
 func resolveHostname(name string) (resolvedIPString string, err error) {
-	maxTries := 10
-	if services.StartedAtBoot() {
-		maxTries *= 3
-	}
+	const maxTries = 10
 	for i := 0; i < maxTries; i++ {
 		if i > 0 {
 			time.Sleep(time.Second * 4)
@@ -32,10 +28,6 @@ func resolveHostname(name string) (resolvedIPString string, err error) {
 		}
 		if err == windows.WSATRY_AGAIN {
 			log.Printf("Temporary DNS error when resolving %s, so sleeping for 4 seconds", name)
-			continue
-		}
-		if err == windows.WSAHOST_NOT_FOUND && services.StartedAtBoot() {
-			log.Printf("Host not found when resolving %s at boot time, so sleeping for 4 seconds", name)
 			continue
 		}
 		return

@@ -1,46 +1,46 @@
-# [WireGuard](https://www.wireguard.com/) for Windows
+# WireGuard Windows CLI (portable)
 
-This is a fully-featured WireGuard client for Windows that uses [WireGuardNT](https://git.zx2c4.com/wireguard-nt/about/). It is the only official and recommended way of using WireGuard on Windows.
+A portable command-line WireGuard client for Windows, cut down from the official [WireGuard for Windows](https://www.wireguard.com/) client. There is no installer, no system-tray UI, no manager service, and no auto-updater. Copy one directory and run it.
 
-## Download &amp; Install
+The tunnel itself is still WireGuardNT: creating the adapter, routes, DNS, and the kill-switch firewall requires an elevated administrator. Portable means nothing is installed, not that a normal user can bring a tunnel up.
 
-If you've come here looking to simply run WireGuard for Windows, [the main download page has links](https://www.wireguard.com/install/). There you will find two things:
+## Layout
 
-- [The WireGuard Installer](https://download.wireguard.com/windows-client/wireguard-installer.exe) &ndash; This selects the most recent version for your architecture, downloads it, checks signatures and hashes, and installs it.
-- [Standalone MSIs](https://download.wireguard.com/windows-client/) &ndash; These are for system admins who wish to deploy the MSIs directly. For most end users, the ordinary installer takes care of downloading these automatically.
+```text
+wgctl.exe
+wireguard.dll
+```
 
-## Documentation
+`wireguard.dll` must sit next to `wgctl.exe`. The build copies the official WireGuardNT build into that directory. Pid files (`<name>.pid`) and logs (`<name>.log`) are written next to the executable, unless `WGCTL_RUNTIME_DIR` is set.
 
-In addition to this [`README.md`](README.md), the following documents are also available:
+## Commands
 
-- [`adminregistry.md`](docs/adminregistry.md) &ndash; A list of registry keys settable by the system administrator for changing the behavior of the application.
-- [`attacksurface.md`](docs/attacksurface.md) &ndash; A discussion of the various components from a security perspective, so that future auditors of this code have a head start in assessing its security design.
-- [`buildrun.md`](docs/buildrun.md) &ndash; Instructions on building, localizing, running, and developing for this repository.
-- [`enterprise.md`](docs/enterprise.md) &ndash; A summary of various features and tips for making the application usable in enterprise settings.
-- [`netquirk.md`](docs/netquirk.md) &ndash; A description of various networking quirks and "kill-switch" semantics.
+```text
+wgctl up [-f] CONFIG.conf      bring the tunnel up and block until Ctrl+C
+wgctl down CONFIG.conf|NAME    ask that tunnel process to shut down
+wgctl show [NAME]              handshake, transfer, and endpoint of running tunnels
+wgctl genkey                   print a new private key
+wgctl pubkey                   read a private key on stdin, print its public key
+```
+
+`up` stays in the foreground so closing the console or pressing Ctrl+C tears the adapter down. `up -f` starts that same process in the background and returns immediately. `down` signals it through a named event (`Global\WireGuardTunnel-<name>`) and waits until it exits. A second `up` of the same tunnel name fails while the first pid is still alive.
+
+Configurations are ordinary plaintext `wg-quick(8)` files. The tunnel name is the file name without `.conf`, and must match `^[A-Za-z0-9_=+.-]{1,32}$`. PreUp/PostUp/PreDown/PostDown still run only when `HKLM\Software\WireGuard\DangerousScriptExecution` is set; they are skipped otherwise.
+
+## Build
+
+From Linux or macOS, with Go and `bsdtar`:
+
+```text
+make
+```
+
+This downloads the pinned WireGuardNT zip, checks its SHA-256, and writes `amd64/`, `x86/`, and `arm64/`, each containing `wgctl.exe` and `wireguard.dll`.
+
+## What was removed
+
+The tray UI, MSI installer, manager service, auto-updater, DPAPI configuration store under `%ProgramFiles%\WireGuard`, and the localization catalogs are gone. A tunnel is one process, not a Windows service, because `StartServiceCtrlDispatcher` only succeeds for processes the Service Control Manager started.
 
 ## License
 
-This repository is MIT-licensed.
-
-```text
-Copyright (C) 2018-2026 WireGuard LLC. All Rights Reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of this software and associated documentation files (the "Software"),
-to deal in the Software without restriction, including without limitation
-the rights to use, copy, modify, merge, publish, distribute, sublicense,
-and/or sell copies of the Software, and to permit persons to whom the
-Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
+MIT. Copyright (C) 2018-2026 WireGuard LLC. All Rights Reserved. See [COPYING](COPYING).

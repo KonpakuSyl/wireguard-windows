@@ -24,50 +24,18 @@ func isAdmin(token windows.Token) bool {
 	return isAdmin && err == nil
 }
 
-func TokenIsElevatedOrElevatable(token windows.Token) bool {
-	if token.IsElevated() && isAdmin(token) {
-		return true
-	}
-	linked, err := token.GetLinkedToken()
+// TokenIsElevated reports whether token is an elevated administrator token.
+func TokenIsElevated(token windows.Token) bool {
+	return token.IsElevated() && isAdmin(token)
+}
+
+// IsElevated reports whether the current process is an elevated administrator.
+func IsElevated() bool {
+	var processToken windows.Token
+	err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &processToken)
 	if err != nil {
 		return false
 	}
-	defer linked.Close()
-	return linked.IsElevated() && isAdmin(linked)
-}
-
-func IsAdminDesktop() (bool, error) {
-	hwnd := windows.GetShellWindow()
-	if hwnd == 0 {
-		return false, windows.ERROR_INVALID_WINDOW_HANDLE
-	}
-	var pid uint32
-	_, err := windows.GetWindowThreadProcessId(hwnd, &pid)
-	if err != nil {
-		return false, err
-	}
-	process, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, false, pid)
-	if err != nil {
-		return false, err
-	}
-	defer windows.CloseHandle(process)
-	var token windows.Token
-	err = windows.OpenProcessToken(process, windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &token)
-	if err != nil {
-		return false, err
-	}
-	defer token.Close()
-	return TokenIsElevatedOrElevatable(token), nil
-}
-
-func AdminGroupName() string {
-	builtinAdminsGroup, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
-	if err != nil {
-		return "Administrators"
-	}
-	name, _, _, err := builtinAdminsGroup.LookupAccount("")
-	if err != nil {
-		return "Administrators"
-	}
-	return name
+	defer processToken.Close()
+	return TokenIsElevated(processToken)
 }

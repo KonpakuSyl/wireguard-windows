@@ -15,8 +15,6 @@ import (
 	"net/netip"
 	"strings"
 	"time"
-
-	"golang.zx2c4.com/wireguard/windows/l18n"
 )
 
 const KeyLength = 32
@@ -162,9 +160,9 @@ func (t HandshakeTime) String() string {
 	u := time.Unix(0, 0).Add(time.Duration(t)).Unix()
 	n := time.Now().Unix()
 	if u == n {
-		return l18n.Sprintf("Now")
+		return fmt.Sprintf("Now")
 	} else if u > n {
-		return l18n.Sprintf("System clock wound backward!")
+		return fmt.Sprintf("System clock wound backward!")
 	}
 	left := n - u
 	years := left / (365 * 24 * 60 * 60)
@@ -177,35 +175,35 @@ func (t HandshakeTime) String() string {
 	seconds := left % 60
 	s := make([]string, 0, 5)
 	if years > 0 {
-		s = append(s, l18n.Sprintf("%d year(s)", years))
+		s = append(s, fmt.Sprintf("%d year(s)", years))
 	}
 	if days > 0 {
-		s = append(s, l18n.Sprintf("%d day(s)", days))
+		s = append(s, fmt.Sprintf("%d day(s)", days))
 	}
 	if hours > 0 {
-		s = append(s, l18n.Sprintf("%d hour(s)", hours))
+		s = append(s, fmt.Sprintf("%d hour(s)", hours))
 	}
 	if minutes > 0 {
-		s = append(s, l18n.Sprintf("%d minute(s)", minutes))
+		s = append(s, fmt.Sprintf("%d minute(s)", minutes))
 	}
 	if seconds > 0 {
-		s = append(s, l18n.Sprintf("%d second(s)", seconds))
+		s = append(s, fmt.Sprintf("%d second(s)", seconds))
 	}
-	timestamp := strings.Join(s, l18n.UnitSeparator())
-	return l18n.Sprintf("%s ago", timestamp)
+	timestamp := strings.Join(s, ", ")
+	return fmt.Sprintf("%s ago", timestamp)
 }
 
 func (b Bytes) String() string {
 	if b < 1024 {
-		return l18n.Sprintf("%d\u00a0B", b)
+		return fmt.Sprintf("%d\u00a0B", b)
 	} else if b < 1024*1024 {
-		return l18n.Sprintf("%.2f\u00a0KiB", float64(b)/1024)
+		return fmt.Sprintf("%.2f\u00a0KiB", float64(b)/1024)
 	} else if b < 1024*1024*1024 {
-		return l18n.Sprintf("%.2f\u00a0MiB", float64(b)/(1024*1024))
+		return fmt.Sprintf("%.2f\u00a0MiB", float64(b)/(1024*1024))
 	} else if b < 1024*1024*1024*1024 {
-		return l18n.Sprintf("%.2f\u00a0GiB", float64(b)/(1024*1024*1024))
+		return fmt.Sprintf("%.2f\u00a0GiB", float64(b)/(1024*1024*1024))
 	}
-	return l18n.Sprintf("%.2f\u00a0TiB", float64(b)/(1024*1024*1024)/1024)
+	return fmt.Sprintf("%.2f\u00a0TiB", float64(b)/(1024*1024*1024)/1024)
 }
 
 func (conf *Config) DeduplicateNetworkEntries() {

@@ -7,6 +7,7 @@ package conf
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -15,7 +16,6 @@ import (
 	"golang.org/x/text/encoding/unicode"
 
 	"golang.zx2c4.com/wireguard/windows/driver"
-	"golang.zx2c4.com/wireguard/windows/l18n"
 )
 
 type ParseError struct {
@@ -24,7 +24,7 @@ type ParseError struct {
 }
 
 func (e *ParseError) Error() string {
-	return l18n.Sprintf("%s: %q", e.why, e.offender)
+	return fmt.Sprintf("%s: %q", e.why, e.offender)
 }
 
 func parseIPCidr(s string) (netip.Prefix, error) {
@@ -34,7 +34,7 @@ func parseIPCidr(s string) (netip.Prefix, error) {
 	}
 	addr, err := netip.ParseAddr(s)
 	if err != nil {
-		return netip.Prefix{}, &ParseError{l18n.Sprintf("Invalid IP address: "), s}
+		return netip.Prefix{}, &ParseError{fmt.Sprintf("Invalid IP address: "), s}
 	}
 	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
@@ -42,11 +42,11 @@ func parseIPCidr(s string) (netip.Prefix, error) {
 func parseEndpoint(s string) (*Endpoint, error) {
 	i := strings.LastIndexByte(s, ':')
 	if i < 0 {
-		return nil, &ParseError{l18n.Sprintf("Missing port from endpoint"), s}
+		return nil, &ParseError{fmt.Sprintf("Missing port from endpoint"), s}
 	}
 	host, portStr := s[:i], s[i+1:]
 	if len(host) < 1 {
-		return nil, &ParseError{l18n.Sprintf("Invalid endpoint host"), host}
+		return nil, &ParseError{fmt.Sprintf("Invalid endpoint host"), host}
 	}
 	port, err := parsePort(portStr)
 	if err != nil {
@@ -54,7 +54,7 @@ func parseEndpoint(s string) (*Endpoint, error) {
 	}
 	hostColon := strings.IndexByte(host, ':')
 	if host[0] == '[' || host[len(host)-1] == ']' || hostColon >= 0 {
-		err := &ParseError{l18n.Sprintf("Brackets must contain an IPv6 address"), host}
+		err := &ParseError{fmt.Sprintf("Brackets must contain an IPv6 address"), host}
 		if len(host) > 3 && host[0] == '[' && host[len(host)-1] == ']' && hostColon > 0 {
 			end := len(host) - 1
 			if i := strings.LastIndexByte(host, '%'); i > 1 {
@@ -78,7 +78,7 @@ func parseMTU(s string) (uint16, error) {
 		return 0, err
 	}
 	if m < 576 || m > 65535 {
-		return 0, &ParseError{l18n.Sprintf("Invalid MTU"), s}
+		return 0, &ParseError{fmt.Sprintf("Invalid MTU"), s}
 	}
 	return uint16(m), nil
 }
@@ -89,7 +89,7 @@ func parsePort(s string) (uint16, error) {
 		return 0, err
 	}
 	if m < 0 || m > 65535 {
-		return 0, &ParseError{l18n.Sprintf("Invalid port"), s}
+		return 0, &ParseError{fmt.Sprintf("Invalid port"), s}
 	}
 	return uint16(m), nil
 }
@@ -103,7 +103,7 @@ func parsePersistentKeepalive(s string) (uint16, error) {
 		return 0, err
 	}
 	if m < 0 || m > 65535 {
-		return 0, &ParseError{l18n.Sprintf("Invalid persistent keepalive"), s}
+		return 0, &ParseError{fmt.Sprintf("Invalid persistent keepalive"), s}
 	}
 	return uint16(m), nil
 }
@@ -121,10 +121,10 @@ func parseTableOff(s string) (bool, error) {
 func parseKeyBase64(s string) (*Key, error) {
 	k, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
-		return nil, &ParseError{l18n.Sprintf("Invalid key: %v", err), s}
+		return nil, &ParseError{fmt.Sprintf("Invalid key: %v", err), s}
 	}
 	if len(k) != KeyLength {
-		return nil, &ParseError{l18n.Sprintf("Keys must decode to exactly 32 bytes"), s}
+		return nil, &ParseError{fmt.Sprintf("Keys must decode to exactly 32 bytes"), s}
 	}
 	var key Key
 	copy(key[:], k)
@@ -136,7 +136,7 @@ func splitList(s string) ([]string, error) {
 	for split := range strings.SplitSeq(s, ",") {
 		trim := strings.TrimSpace(split)
 		if len(trim) == 0 {
-			return nil, &ParseError{l18n.Sprintf("Two commas in a row"), s}
+			return nil, &ParseError{fmt.Sprintf("Two commas in a row"), s}
 		}
 		out = append(out, trim)
 	}
@@ -159,7 +159,7 @@ func (c *Config) maybeAddPeer(p *Peer) {
 
 func FromWgQuick(s, name string) (*Config, error) {
 	if !TunnelNameIsValid(name) {
-		return nil, &ParseError{l18n.Sprintf("Tunnel name is not valid"), name}
+		return nil, &ParseError{fmt.Sprintf("Tunnel name is not valid"), name}
 	}
 	lines := strings.Split(s, "\n")
 	parserState := notInASection
@@ -209,10 +209,10 @@ func FromWgQuick(s, name string) (*Config, error) {
 			continue
 		}
 		if parserState == notInASection {
-			return nil, &ParseError{l18n.Sprintf("Line must occur in a section"), stripped}
+			return nil, &ParseError{fmt.Sprintf("Line must occur in a section"), stripped}
 		}
 		if !hasValue {
-			return nil, &ParseError{l18n.Sprintf("Config key is missing an equals separator"), stripped}
+			return nil, &ParseError{fmt.Sprintf("Config key is missing an equals separator"), stripped}
 		}
 		switch key {
 		case "preup", "postup", "predown", "postdown":
@@ -221,7 +221,7 @@ func FromWgQuick(s, name string) (*Config, error) {
 		}
 		val = strings.TrimSpace(val)
 		if len(val) == 0 {
-			return nil, &ParseError{l18n.Sprintf("Key must have a value"), stripped}
+			return nil, &ParseError{fmt.Sprintf("Key must have a value"), stripped}
 		}
 		section := &conf.Interface.Comments
 		if parserState == inPeerSection {
@@ -304,7 +304,7 @@ func FromWgQuick(s, name string) (*Config, error) {
 				}
 				conf.Interface.TableOff = tableOff
 			default:
-				return nil, &ParseError{l18n.Sprintf("Invalid key for [Interface] section"), key}
+				return nil, &ParseError{fmt.Sprintf("Invalid key for [Interface] section"), key}
 			}
 		} else if parserState == inPeerSection {
 			switch key {
@@ -345,7 +345,7 @@ func FromWgQuick(s, name string) (*Config, error) {
 				}
 				peer.Endpoint = *e
 			default:
-				return nil, &ParseError{l18n.Sprintf("Invalid key for [Peer] section"), key}
+				return nil, &ParseError{fmt.Sprintf("Invalid key for [Peer] section"), key}
 			}
 		}
 	}
@@ -392,11 +392,11 @@ func FromWgQuick(s, name string) (*Config, error) {
 	}
 
 	if !sawPrivateKey {
-		return nil, &ParseError{l18n.Sprintf("An interface must have a private key"), l18n.Sprintf("[none specified]")}
+		return nil, &ParseError{fmt.Sprintf("An interface must have a private key"), fmt.Sprintf("[none specified]")}
 	}
 	for _, p := range conf.Peers {
 		if p.PublicKey.IsZero() {
-			return nil, &ParseError{l18n.Sprintf("All peers must have public keys"), l18n.Sprintf("[none specified]")}
+			return nil, &ParseError{fmt.Sprintf("All peers must have public keys"), fmt.Sprintf("[none specified]")}
 		}
 	}
 

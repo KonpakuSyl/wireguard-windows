@@ -15,3 +15,5 @@
 *.syso
 .idea
 *.ico
+.DS_Store
+*.zip
